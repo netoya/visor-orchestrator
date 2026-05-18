@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.coord-prompts/
+state/test-*.db
+state/test-*.db-*
+state/*.log
+state/*.db
+state/*.db-wal
+state/*.db-shm
+test-results/
+playwright-report/
+.DS_Store
+.env
+.env.local
+*.log
+public/

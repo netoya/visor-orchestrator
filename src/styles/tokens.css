@@ -1,0 +1,85 @@
+/* src/styles/tokens.css
+ * Tokens centrales del UI (dark theme). Cualquier color, espaciado, radio,
+ * sombra, tipografia o curva de animacion debe consumir una variable aqui.
+ * Los nombres legacy (--bg, --fg, --accent, etc.) se mantienen como alias
+ * para no romper consumidores existentes.
+ */
+
+:root {
+  /* Fondos */
+  --color-bg-base: #0a0e14;
+  --color-bg-elevated: #11161e;
+  --color-bg-raised: #161c27;
+  --color-bg-overlay: rgba(0, 0, 0, 0.55);
+
+  /* Texto */
+  --color-text-primary: #d6deeb;
+  --color-text-secondary: #9aa6b2;
+  --color-text-muted: #5c6773;
+
+  /* Bordes */
+  --color-border-subtle: #1c2330;
+  --color-border-strong: #2c3445;
+
+  /* Acento */
+  --color-accent: #82b1ff;
+  --color-accent-hover: #5e92ff;
+  --color-accent-soft: rgba(130, 177, 255, 0.12);
+
+  /* Estados */
+  --color-status-success: #65c68a;
+  --color-status-success-soft: rgba(101, 198, 138, 0.12);
+  --color-status-warning: #ffcb6b;
+  --color-status-warning-soft: rgba(255, 203, 107, 0.12);
+  --color-status-error: #f07178;
+  --color-status-error-soft: rgba(240, 113, 120, 0.12);
+  --color-status-info: #82b1ff;
+  --color-status-neutral: #9aa6b2;
+  --color-status-neutral-soft: rgba(92, 103, 115, 0.18);
+
+  /* Espaciados */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 20px;
+  --space-xl: 32px;
+
+  /* Tipografia */
+  --font-size-xs: 0.72rem;
+  --font-size-sm: 0.78rem;
+  --font-size-base: 0.85rem;
+  --font-size-md: 0.9rem;
+  --font-size-lg: 1rem;
+
+  /* Radios */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+
+  /* Sombras */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-drawer: -8px 0 24px rgba(0, 0, 0, 0.35);
+
+  /* Animaciones */
+  --duration-fast: 150ms;
+  --duration-base: 200ms;
+  --duration-slow: 280ms;
+  --easing-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --easing-in: cubic-bezier(0.7, 0, 0.84, 0);
+
+  /* Fuentes */
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Aliases legacy (no romper consumidores) */
+  --bg: var(--color-bg-base);
+  --fg: var(--color-text-primary);
+  --muted: var(--color-text-secondary);
+  --accent: var(--color-accent);
+  --panel: var(--color-bg-elevated);
+  --border: var(--color-border-subtle);
+  --error: var(--color-status-error);
+  --alert: var(--color-status-warning);
+  --alert-red: var(--color-status-error);
+}
