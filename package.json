@@ -4,11 +4,11 @@
   "type": "module",
   "description": "UI visor del autonomous-orchestrator. Lee state/orchestrator.db y procesos claude vivos.",
   "scripts": {
-    "dev": "tsx --watch server/index.ts",
+    "dev": "tsx --env-file=.env --watch server/index.ts",
     "dev:ui": "vite",
     "build": "tsc -p tsconfig.json && vite build",
     "preview": "vite preview",
-    "start": "node dist/server/index.js",
+    "start": "node --env-file=.env dist/server/index.js",
     "test:e2e": "playwright test",
     "test:e2e:install": "npx playwright install chromium"
   },

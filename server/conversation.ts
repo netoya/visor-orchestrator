@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ConversationMessage } from './types.js';
@@ -56,12 +56,34 @@ function pickTimestamp(record: Record<string, unknown>): number | undefined {
   return undefined;
 }
 
+function findSessionFile(baseDir: string, primarySlug: string, sessionId: string): string | null {
+  const primary = join(baseDir, primarySlug, `${sessionId}.jsonl`);
+  if (existsSync(primary)) return primary;
+
+  let slugs: string[];
+  try {
+    slugs = readdirSync(baseDir);
+  } catch {
+    return null;
+  }
+  for (const slug of slugs) {
+    if (slug === primarySlug) continue;
+    const candidate = join(baseDir, slug, `${sessionId}.jsonl`);
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // not present in this slug, keep searching
+    }
+  }
+  return null;
+}
+
 export function readConversationMessages(sessionId: string): ConversationMessage[] {
   const baseDir = resolveSessionsDir();
   const cwdSlug = slugifyCwd(resolveOrchestratorCwd());
-  const filePath = join(baseDir, cwdSlug, `${sessionId}.jsonl`);
+  const filePath = findSessionFile(baseDir, cwdSlug, sessionId);
 
-  if (!existsSync(filePath)) return [];
+  if (!filePath) return [];
 
   let raw: string;
   try {
