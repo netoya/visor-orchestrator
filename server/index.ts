@@ -20,6 +20,9 @@ import {
   launchConfirm,
   checkCliReachable,
   fulfillWaiter,
+  cancelFlow,
+  rejectWaiter,
+  listTaskWaiters,
 } from './operations.js';
 import type {
   ConfirmRequest,
@@ -287,6 +290,74 @@ app.post('/api/waiters/:id/fulfill', async (c) => {
   }
 });
 
+// ADR-006: lifecycle controls endpoints.
+
+app.post('/api/flows/:id/cancel', async (c) => {
+  const id = c.req.param('id');
+
+  let body: { reason?: string } = {};
+  try {
+    body = await c.req.json<{ reason?: string }>();
+  } catch {
+    // body opcional, ignorar parsing error
+  }
+
+  try {
+    const result = await cancelFlow({ flowId: id, reason: body.reason });
+    return c.json(result);
+  } catch (err) {
+    const msg = (err as Error).message;
+    console.error(`[POST /api/flows/${id}/cancel] failed`, msg);
+    if (msg.toLowerCase().includes('not found')) {
+      return c.json({ error: msg }, 404);
+    }
+    return c.json({ error: msg }, 500);
+  }
+});
+
+app.post('/api/waiters/:id/reject', async (c) => {
+  const id = c.req.param('id');
+
+  let body: { reason?: string } = {};
+  try {
+    body = await c.req.json<{ reason?: string }>();
+  } catch {
+    return c.json({ error: 'invalid JSON body' }, 400);
+  }
+
+  if (!body.reason || body.reason.trim().length === 0) {
+    return c.json({ error: 'reason is required and cannot be empty' }, 400);
+  }
+
+  try {
+    const result = await rejectWaiter({ waiterId: id, reason: body.reason });
+    return c.json(result);
+  } catch (err) {
+    const msg = (err as Error).message;
+    console.error(`[POST /api/waiters/${id}/reject] failed`, msg);
+    const low = msg.toLowerCase();
+    if (low.includes('not found') || low.includes('already')) {
+      return c.json({ error: msg }, 409);
+    }
+    return c.json({ error: msg }, 500);
+  }
+});
+
+app.get('/api/tasks/:id/waiters', async (c) => {
+  const id = c.req.param('id');
+  try {
+    const waiters = await listTaskWaiters({ taskId: id });
+    return c.json(waiters);
+  } catch (err) {
+    const msg = (err as Error).message;
+    console.error(`[GET /api/tasks/${id}/waiters] failed`, msg);
+    if (msg.toLowerCase().includes('not found')) {
+      return c.json({ error: msg }, 404);
+    }
+    return c.json({ error: msg }, 500);
+  }
+});
+
 function readPlanFile(orchDir: string, name: 'PLAN-FINAL.md' | 'PLAN-PROPOSAL.md'): string | undefined {
   try {
     return readFileSync(join(orchDir, 'state/conversations', name), 'utf8');
@@ -326,10 +397,43 @@ app.get('/api/flows/:id/prepare-state', (c) => {
     .get({ id: flowId }) as { status: string } | undefined;
 
   if (!taskRow) {
-    const payload: PrepareState = {
-      state: 'error',
-      errorMessage: 'planner-analyze task not found for flow',
-    };
+    // planner-analyze aún no existe — el coordinator-seed la crea tras descomponer.
+    // Mirar el estado del coordinator-seed (stage='coordinate') para decidir.
+    const coordTask = db
+      .prepare(
+        `SELECT status FROM tasks
+         WHERE flow_id = @id AND stage = 'coordinate'
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get({ id: flowId }) as { status: string } | undefined;
+
+    if (!coordTask) {
+      const payload: PrepareState = {
+        state: 'error',
+        errorMessage: 'flow has no coordinate task — invalid state',
+      };
+      return c.json(payload);
+    }
+
+    if (coordTask.status === 'failed' || coordTask.status === 'cancelled') {
+      const payload: PrepareState = {
+        state: 'error',
+        errorMessage: `coordinator-seed ${coordTask.status} — planner-analyze never created`,
+      };
+      return c.json(payload);
+    }
+
+    if (coordTask.status === 'done') {
+      // Coordinator-seed terminó pero NO creó planner-analyze (caso anómalo).
+      const payload: PrepareState = {
+        state: 'error',
+        errorMessage: 'coordinator-seed completed but planner-analyze was not created',
+      };
+      return c.json(payload);
+    }
+
+    // queued | ready | running → coordinator-seed aún descomponiendo
+    const payload: PrepareState = { state: 'preparing' };
     return c.json(payload);
   }
 

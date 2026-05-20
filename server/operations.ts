@@ -174,6 +174,123 @@ export async function fulfillWaiter(opts: {
   });
 }
 
+// ADR-006: cancel + reject + audit via CLI spawn.
+
+/**
+ * Cancela un flow via `npx orchestrator flow cancel <id> [--reason "..."]`.
+ * Idempotente: si flow ya está terminal, retorna { alreadyTerminal: true }.
+ */
+export async function cancelFlow(opts: {
+  flowId: string;
+  reason?: string;
+}): Promise<{ ok: true; alreadyTerminal: boolean; output: string }> {
+  const orchDir = getOrchestratorDir();
+  const args = ['orchestrator', 'flow', 'cancel', opts.flowId];
+  if (opts.reason) args.push('--reason', opts.reason);
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn('npx', args, {
+      cwd: orchDir,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (c) => (stdout += c.toString()));
+    proc.stderr.on('data', (c) => (stderr += c.toString()));
+    proc.on('error', (e) => reject(new Error(`spawn-error: ${e.message}`)));
+    proc.on('close', (exit) => {
+      if (exit !== 0) {
+        return reject(new Error(`cancel exit=${exit}: ${stderr || stdout}`));
+      }
+      const alreadyTerminal = stdout.includes('already in a terminal state');
+      resolve({ ok: true, alreadyTerminal, output: stdout });
+    });
+  });
+}
+
+/**
+ * Rechaza un waiter via `npx orchestrator waiter reject <id> --reason "..."`.
+ * --reason es obligatorio.
+ */
+export async function rejectWaiter(opts: {
+  waiterId: string;
+  reason: string;
+}): Promise<{ ok: true; alreadyTerminal: boolean; output: string }> {
+  if (!opts.reason || opts.reason.trim().length === 0) {
+    throw new Error('reason is required');
+  }
+  const orchDir = getOrchestratorDir();
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      'npx',
+      ['orchestrator', 'waiter', 'reject', opts.waiterId, '--reason', opts.reason],
+      {
+        cwd: orchDir,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (c) => (stdout += c.toString()));
+    proc.stderr.on('data', (c) => (stderr += c.toString()));
+    proc.on('error', (e) => reject(new Error(`spawn-error: ${e.message}`)));
+    proc.on('close', (exit) => {
+      if (exit !== 0) {
+        return reject(new Error(`reject exit=${exit}: ${stderr || stdout}`));
+      }
+      const alreadyTerminal = stdout.includes('already in a terminal state');
+      resolve({ ok: true, alreadyTerminal, output: stdout });
+    });
+  });
+}
+
+/**
+ * Lista los waiters de una task via `npx orchestrator task waiters <id> --json`.
+ * Retorna array de WaiterRow estructurados.
+ */
+export async function listTaskWaiters(opts: { taskId: string }): Promise<unknown[]> {
+  const orchDir = getOrchestratorDir();
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      'npx',
+      ['orchestrator', 'task', 'waiters', opts.taskId, '--json'],
+      {
+        cwd: orchDir,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10_000,
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (c) => (stdout += c.toString()));
+    proc.stderr.on('data', (c) => (stderr += c.toString()));
+    proc.on('error', (e) => reject(new Error(`spawn-error: ${e.message}`)));
+    proc.on('close', (exit) => {
+      if (exit !== 0) {
+        return reject(new Error(`task waiters exit=${exit}: ${stderr || stdout}`));
+      }
+      try {
+        const parsed = JSON.parse(stdout);
+        if (!Array.isArray(parsed)) {
+          return reject(new Error(`task waiters did not return array`));
+        }
+        resolve(parsed);
+      } catch (err) {
+        // Caso "no waiters for task" → output no es JSON, retornar []
+        if (stdout.includes('no waiters for task')) return resolve([]);
+        reject(new Error(`task waiters parse error: ${(err as Error).message}`));
+      }
+    });
+  });
+}
+
 export function checkCliReachable(): Promise<boolean> {
   const orchDir = process.env.ORCHESTRATOR_DIR;
   if (!orchDir) return Promise.resolve(false);
