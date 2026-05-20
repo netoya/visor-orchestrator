@@ -334,7 +334,7 @@ export function checkCliReachable(): Promise<boolean> {
       resolve(ok);
     };
     try {
-      const proc = spawn('npx', ['orchestrator', '--help'], {
+      const proc = spawn('npx', ['orchestrator', 'status'], {
         cwd: orchDir,
         env: process.env,
         stdio: ['ignore', 'pipe', 'pipe'],

@@ -551,6 +551,28 @@ export async function postFulfillWaiter(waiterId, value) {
 }
 
 /**
+ * Cancela un flow en cascada (tasks + waiters → cancelled).
+ * Endpoint: `POST /api/flows/:id/cancel`.
+ * @param {string} flowId
+ * @param {string} [reason]
+ * @returns {Promise<object | { error: string, status?: number }>}
+ */
+export async function postCancelFlow(flowId, reason) {
+  return postJson('/api/flows/' + encodeURIComponent(flowId) + '/cancel', reason ? { reason } : {});
+}
+
+/**
+ * Rechaza un waiter pasivo. `reason` es obligatorio.
+ * Endpoint: `POST /api/waiters/:id/reject`.
+ * @param {string} waiterId
+ * @param {string} reason
+ * @returns {Promise<object | { error: string, status?: number }>}
+ */
+export async function postRejectWaiter(waiterId, reason) {
+  return postJson('/api/waiters/' + encodeURIComponent(waiterId) + '/reject', { reason });
+}
+
+/**
  * Estado actual del prepare flow (polling cada 2s desde CoordinateTab).
  * Endpoint: `GET /api/flows/:id/prepare-state`.
  * @param {string} flowId

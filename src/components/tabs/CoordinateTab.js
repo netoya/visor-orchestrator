@@ -35,6 +35,7 @@ import './CoordinateTab.css';
 
 import {
   fetchPrepareState,
+  postCancelFlow,
   postConfirm,
   postFulfillWaiter,
   postPrepare,
@@ -48,8 +49,7 @@ import { escapeHtml } from '../../utils/format.js';
 // ---------------------------------------------------------------------------
 
 const VIEW_ID = 'view';
-const POLL_INTERVAL_MS = 2000;
-const POLL_STALL_TIMEOUT_MS = 90_000; // §3.6: 90s sin cambio -> error
+const POLL_INTERVAL_MS = 4000;
 const MIN_IDEA_LEN = 20;
 const MAX_IDEA_LEN = 8000;
 const MAX_ITERATIONS = 3;
@@ -352,12 +352,10 @@ function startPolling(flowId) {
 }
 
 async function tickPrepareState(flowId) {
-  // Detectar stall (§3.6): si llevamos POLL_STALL_TIMEOUT_MS sin cambio, error.
-  if (Date.now() - state.lastStateChangeAt > POLL_STALL_TIMEOUT_MS && state.status === 'preparing') {
-    stopPolling();
-    transitionToError('El planner no respondio en 90s. Reintenta o edita la idea.');
-    return;
-  }
+  // Sin timeout de stall: mientras el flow siga en `preparing` en backend,
+  // mantenemos el polling. El usuario puede cancelar manualmente desde la tab
+  // Flows si quiere abortar. Solo salimos de `preparing` por cambio de estado
+  // (proposal-ready / blocked-by-waiter / error real reportado por backend).
 
   const res = await fetchPrepareState(flowId);
   if (state.flowId !== flowId) return; // raza: cambio de prepare en vuelo.
@@ -596,7 +594,29 @@ async function actionRespondDifferently(customResponse) {
   });
 }
 
-function actionCancelToIdle() {
+async function actionCancelToIdle() {
+  // Si hay un flow activo (preparing / blocked-by-waiter / proposal-ready),
+  // cancela en backend antes de resetear la UI. Cascada cancela tasks +
+  // waiters segun ADR-006.
+  const flowId = state.flowId;
+  const wasActive =
+    flowId &&
+    (state.status === 'preparing' ||
+      state.status === 'blocked-by-waiter' ||
+      state.status === 'proposal-ready');
+
+  if (wasActive) {
+    stopPolling();
+    const res = await postCancelFlow(flowId, 'cancelled from Coordinate tab');
+    if (res && res.error) {
+      // Si el flow ya estaba terminal (404) o algo raro, lo reportamos sin
+      // bloquear el reset de UI — el usuario quiere volver a idle.
+      console.warn('[Coordinate] cancel flow failed:', res.error);
+    }
+    // Refrescar Recent prepares para no dejar el flow como 'preparing' stale.
+    updateRecentState(flowId, 'cancelled');
+  }
+
   resetToIdle({ keepIdea: true });
 }
 
