@@ -1,15 +1,36 @@
 // src/components/drawers/waiter-detail.js
-// Drawer lateral del detalle de un waiter. Recibe el objeto completo (no
-// re-fetch). Muestra encabezado, prompt, schema parseado (con
-// available_actions si existe), value_json (si fulfilled) y expires_in_s.
+// Drawer lateral del detalle de un waiter.
+//
+// Comportamiento:
+//   - status='waiting' && mode='passive' → renderiza SchemaForm para
+//     resolver el waiter via POST /api/waiters/:id/fulfill. La sección
+//     "Schema" raw se reemplaza por el form (evita duplicación).
+//   - resto → vista read-only existente (id, status, prompt, schema raw,
+//     value_json si fulfilled, expires_in).
+//
+// "Respond differently" NO se ofrece desde esta tab: cuando un operador
+// abre el drawer desde la tab Waiters genérica no hay un "prepare flow"
+// al que rebobinar. El callback no se pasa a SchemaForm, por lo que el
+// botón no se renderiza. Bajo el form mostramos un help text con title
+// (tooltip nativo) explicando dónde sí aplica.
+//
+// Spec: docs/specs/v1-write-operations.md §4 (Capacidad B).
 
 import { openDrawer } from './drawer.js';
+import { createSchemaForm } from '../forms/SchemaForm.js';
+import { fulfillWaiter as apiFulfillWaiter } from '../../api.js';
 import {
   escapeHtml,
   formatSeconds,
   statusBadgeClass,
 } from '../../utils/format.js';
 import { timeSince, toIsoTitle } from '../../lib/timeSince.js';
+
+const STALE_WAITER_RE = /not waiting|not in waiting|already fulfilled|already rejected|not found/i;
+
+function isFulfillable(w) {
+  return !!w && w.status === 'waiting' && w.mode === 'passive';
+}
 
 function renderHeader(w) {
   const created = timeSince(w.created_at);
@@ -106,6 +127,90 @@ function renderSchemaSection(w) {
   );
 }
 
+function renderFulfillSectionShell() {
+  // El form se inyecta como Node por attachFulfillForm tras setContent.
+  return (
+    '<div class="drawer-section waiter-fulfill-section">' +
+    '<div class="drawer-section-title">Resolver waiter</div>' +
+    '<div class="schema-form-mount" data-mount="schema-form"></div>' +
+    '<div class="schema-form-banner waiter-fulfill-error" role="alert" data-mount="fulfill-error" style="display:none"></div>' +
+    '<div class="muted schema-form-help" ' +
+      'title="Solo aplica a waiters del flujo Coordinate. Para resolver este waiter, usa el form structured.">' +
+      'Respond differently: solo disponible desde la tab Coordinate.' +
+    '</div>' +
+    '</div>'
+  );
+}
+
+function attachFulfillForm(host, waiter, opts) {
+  const mount = host.querySelector('[data-mount="schema-form"]');
+  const errBanner = host.querySelector('[data-mount="fulfill-error"]');
+  if (!mount) return;
+
+  function showError(msg) {
+    if (!errBanner) return;
+    errBanner.textContent = msg;
+    errBanner.style.display = 'block';
+  }
+  function hideError() {
+    if (!errBanner) return;
+    errBanner.textContent = '';
+    errBanner.style.display = 'none';
+  }
+  function setBusy(busy) {
+    const buttons = mount.querySelectorAll('button');
+    buttons.forEach(function (b) { b.disabled = !!busy; });
+  }
+
+  async function handleSubmit(value) {
+    hideError();
+    setBusy(true);
+    let res;
+    try {
+      res = await apiFulfillWaiter(waiter.id, value);
+    } catch (e) {
+      showError('Error inesperado: ' + (e && e.message ? e.message : String(e)));
+      setBusy(false);
+      return;
+    }
+    if (res && res.error) {
+      showError('No se pudo resolver: ' + res.error);
+      setBusy(false);
+      // Race: el waiter ya no está en waiting. Refrescamos la tabla
+      // para que el operador vea el estado actual; el drawer queda
+      // abierto con el error visible (no auto-cierra para no perder
+      // contexto del fallo).
+      if (STALE_WAITER_RE.test(String(res.error))) {
+        if (typeof opts.onFulfilled === 'function') {
+          try { opts.onFulfilled(waiter, null); } catch (_) {}
+        }
+      }
+      return;
+    }
+    // Éxito: refetch + cerrar drawer.
+    if (typeof opts.onFulfilled === 'function') {
+      try { opts.onFulfilled(waiter, res); } catch (_) {}
+    }
+    if (opts.ctx && typeof opts.ctx.close === 'function') opts.ctx.close();
+  }
+
+  function handleCancel() {
+    if (opts.ctx && typeof opts.ctx.close === 'function') opts.ctx.close();
+  }
+
+  const form = createSchemaForm({
+    schemaJson: waiter.schema_json,
+    onSubmit: handleSubmit,
+    onCancel: handleCancel,
+    // Sin onRespondDifferently: el botón no se renderiza. El operador
+    // que abre el waiter desde esta tab no tiene un flow de planner al
+    // que volver. El help text bajo el form explica la limitación.
+    plannerQuestions: undefined,
+  });
+
+  mount.appendChild(form);
+}
+
 function renderValueSection(w) {
   if (w.status !== 'fulfilled') return '';
   if (w.value_json === null || w.value_json === undefined) {
@@ -153,27 +258,42 @@ function attachCloseHandler(host, ctx) {
   if (close) close.addEventListener('click', function () { ctx.close(); });
 }
 
-function makeWaiterView(waiter) {
+function makeWaiterView(waiter, opts) {
   return {
     render(ctx) {
+      const fulfillable = isFulfillable(waiter);
+
       const html =
         renderHeader(waiter) +
         '<div class="drawer-content">' +
         renderPromptSection(waiter) +
-        renderSchemaSection(waiter) +
+        (fulfillable ? renderFulfillSectionShell() : renderSchemaSection(waiter)) +
         renderValueSection(waiter) +
         renderExpiresSection(waiter) +
         '</div>';
       ctx.setContent(html);
       attachCloseHandler(ctx.body, ctx);
+      if (fulfillable) {
+        attachFulfillForm(ctx.body, waiter, {
+          onFulfilled: opts && opts.onFulfilled,
+          ctx: ctx,
+        });
+      }
     },
   };
 }
 
 /**
  * Abre el drawer con el detalle del waiter.
+ *
  * @param {object} waiter
+ * @param {object} [opts]
+ * @param {(waiter: object, result: object|null) => void} [opts.onFulfilled]
+ *   Callback invocado tras un fulfill exitoso (result={ok:true}) o tras
+ *   detectar que el waiter ya no está en `waiting` por un race (result=null).
+ *   Típicamente la tab que abre el drawer pasa aquí su función `load` para
+ *   refetchear la lista.
  */
-export function openWaiterDrawer(waiter) {
-  openDrawer(makeWaiterView(waiter));
+export function openWaiterDrawer(waiter, opts) {
+  openDrawer(makeWaiterView(waiter, opts || {}));
 }

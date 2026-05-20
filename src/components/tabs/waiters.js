@@ -166,7 +166,7 @@ function attachRowHandlers() {
       const id = row.getAttribute('data-waiter-id');
       if (!id) return;
       const w = findWaiter(id);
-      if (w) openWaiterDrawer(w);
+      if (w) openWaiterDrawer(w, { onFulfilled: function () { load(); } });
     };
     row.addEventListener('click', handler);
     row.addEventListener('keydown', function (e) {
