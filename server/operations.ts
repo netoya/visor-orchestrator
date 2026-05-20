@@ -115,24 +115,56 @@ export async function launchPrepare(opts: {
   return { flowId: parsed.flowId, plannerTaskId: parsed.coordinatorTaskId };
 }
 
+/**
+ * ADR-007: launchConfirm delega al CLI `orchestrator flow confirm <id>`.
+ * El CLI hace todas las validaciones (prepare existe, status completed,
+ * archivo PLAN-FINAL existe, contiene PLAN_READY) y setea parent_flow_id
+ * en el nuevo flow. Esto reemplaza el spawn manual de coordinate con
+ * prompt inline que existía antes.
+ */
 export async function launchConfirm(opts: {
   prepareFlowId: string;
 }): Promise<{ executeFlowId: string; executeCoordinatorTaskId: string }> {
-  const prompt = `EJECUCION del plan firme generado por el flow de planner ${opts.prepareFlowId}.
+  const orchDir = getOrchestratorDir();
 
-Lee state/conversations/PLAN-FINAL.md (o PLAN-PROPOSAL.md si no existe el final) — debe estar en Status: PLAN_READY.
-
-Descompon el plan en tasks ejecutivas (impl/test/verify segun corresponda) y arranca el flow de implementacion.
-
-Emite <<COORDINATOR_DONE>> cuando hayas creado las tasks.`;
-  const { stdout, stderr, exitCode } = await spawnCoordinate(prompt);
-  if (exitCode !== 0) throw new Error(`confirm exit=${exitCode}: ${stderr}`);
-  const parsed = parsePlannerOutput(stdout);
-  if (!parsed) throw new Error(`unexpected output: ${stdout}`);
-  return {
-    executeFlowId: parsed.flowId,
-    executeCoordinatorTaskId: parsed.coordinatorTaskId,
-  };
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      'npx',
+      ['orchestrator', 'flow', 'confirm', opts.prepareFlowId],
+      {
+        cwd: orchDir,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (c) => (stdout += c.toString()));
+    proc.stderr.on('data', (c) => (stderr += c.toString()));
+    proc.on('error', (e) => reject(new Error(`spawn-error: ${e.message}`)));
+    proc.on('close', (exit) => {
+      if (exit !== 0) {
+        // El CLI imprime el error específico a stderr o stdout (validaciones).
+        return reject(new Error(`confirm exit=${exit}: ${stderr || stdout}`));
+      }
+      // CLI output esperado (parsear lineas):
+      //   Plan confirmed.
+      //     Plan source: <path>
+      //     Prepare flow: <id>
+      //     Execute flow: <newId>
+      //     Coordinator task: <taskId>
+      const flowMatch = stdout.match(/Execute flow:\s*([A-Z0-9]+)/);
+      const taskMatch = stdout.match(/Coordinator task:\s*([A-Z0-9]+)/);
+      if (!flowMatch || !taskMatch) {
+        return reject(new Error(`unexpected confirm output: ${stdout}`));
+      }
+      resolve({
+        executeFlowId: flowMatch[1]!,
+        executeCoordinatorTaskId: taskMatch[1]!,
+      });
+    });
+  });
 }
 
 export async function fulfillWaiter(opts: {
