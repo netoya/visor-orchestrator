@@ -264,3 +264,31 @@ export type Waiter = WaiterPassive | WaiterActive;
 export interface ListWaitersFilter {
   status?: WaiterStatus;
 }
+
+export interface PrepareRequest {
+  idea: string;
+  previousFlowId?: string;
+  answers?: Record<string, unknown>;
+  customResponse?: string;
+}
+
+export interface ConfirmRequest {
+  prepareFlowId: string;
+}
+
+export interface FulfillWaiterRequest {
+  value: Record<string, unknown>;
+}
+
+export type PrepareStateKind =
+  | 'preparing'
+  | 'proposal-ready'
+  | 'blocked-by-waiter'
+  | 'error';
+
+export interface PrepareState {
+  state: PrepareStateKind;
+  proposalMarkdown?: string;
+  waiter?: Waiter;
+  errorMessage?: string;
+}

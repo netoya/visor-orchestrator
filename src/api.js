@@ -366,6 +366,25 @@ async function getJson(path) {
   }
 }
 
+async function postJson(path, body) {
+  try {
+    const res = await fetch(BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (_e) { data = null; }
+    if (!res.ok) {
+      const msg = data && data.error ? data.error : 'HTTP ' + res.status;
+      return { error: msg, status: res.status };
+    }
+    return data || {};
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Implementaciones
 // ---------------------------------------------------------------------------
@@ -461,4 +480,122 @@ export async function fetchWaiters() {
   const data = await getJson('/api/waiters');
   if (data && data.error) return data;
   return Array.isArray(data && data.waiters) ? data.waiters : [];
+}
+
+// ---------------------------------------------------------------------------
+// Write operations (spec v1-write-operations.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * @typedef {Object} PrepareRequest
+ * @property {string} idea
+ * @property {string} [previousFlowId]
+ * @property {object} [answers]
+ * @property {string} [customResponse]
+ */
+
+/**
+ * @typedef {Object} PrepareResponse
+ * @property {string} flowId
+ * @property {string} plannerTaskId
+ * @property {'preparing'} status
+ */
+
+/**
+ * @typedef {Object} ConfirmResponse
+ * @property {string} executeFlowId
+ * @property {string} executeCoordinatorTaskId
+ */
+
+/**
+ * @typedef {'preparing'|'proposal-ready'|'blocked-by-waiter'|'error'} PrepareStateKind
+ */
+
+/**
+ * @typedef {Object} PrepareState
+ * @property {PrepareStateKind} state
+ * @property {string} [proposalMarkdown]
+ * @property {Waiter} [waiter]
+ * @property {string} [errorMessage]
+ */
+
+/**
+ * Lanza un flow planner-mode (prepare).
+ * Endpoint: `POST /api/flows/prepare`.
+ * @param {PrepareRequest} body
+ * @returns {Promise<PrepareResponse | { error: string, status?: number }>}
+ */
+export async function postPrepare(body) {
+  return postJson('/api/flows/prepare', body || {});
+}
+
+/**
+ * Confirma un prepare ya en estado PLAN_READY: spawnea el flow ejecutor.
+ * Endpoint: `POST /api/flows/confirm`.
+ * @param {string} prepareFlowId
+ * @returns {Promise<ConfirmResponse | { error: string, status?: number }>}
+ */
+export async function postConfirm(prepareFlowId) {
+  return postJson('/api/flows/confirm', { prepareFlowId });
+}
+
+/**
+ * Resuelve un waiter pasivo via spawn del CLI.
+ * Endpoint: `POST /api/waiters/:id/fulfill`.
+ * @param {string} waiterId
+ * @param {object} value
+ * @returns {Promise<{ ok: true } | { error: string, status?: number }>}
+ */
+export async function postFulfillWaiter(waiterId, value) {
+  return postJson('/api/waiters/' + encodeURIComponent(waiterId) + '/fulfill', { value });
+}
+
+/**
+ * Estado actual del prepare flow (polling cada 2s desde CoordinateTab).
+ * Endpoint: `GET /api/flows/:id/prepare-state`.
+ * @param {string} flowId
+ * @returns {Promise<PrepareState | { error: string }>}
+ */
+export async function fetchPrepareState(flowId) {
+  return getJson('/api/flows/' + encodeURIComponent(flowId) + '/prepare-state');
+}
+
+/**
+ * Fulfill un waiter pasivo enviando el `value` (objeto JSON) al backend, que
+ * a su vez spawnea `npx orchestrator waiter fulfill <id> --json ...`.
+ * Endpoint: `POST /api/waiters/:id/fulfill`.
+ *
+ * Errores mapeados:
+ *   - 400 → value no es objeto JSON.
+ *   - 409 → waiter no está en `waiting` (race con auto-fulfill u otro operador).
+ *   - 500 → spawn-error / output inesperado del CLI.
+ *
+ * @param {string} id - waiter id
+ * @param {object} value - payload de respuesta segun schema_json
+ * @returns {Promise<{ok: true} | {error: string, status?: number}>}
+ */
+export async function fulfillWaiter(id, value) {
+  try {
+    const res = await fetch(
+      BASE + '/api/waiters/' + encodeURIComponent(id) + '/fulfill',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: value }),
+      },
+    );
+    if (!res.ok) {
+      let msg = 'HTTP ' + res.status;
+      try {
+        const data = await res.json();
+        if (data && data.error) msg = String(data.error);
+      } catch (_) {
+        // ignore body parse error
+      }
+      return { error: msg, status: res.status };
+    }
+    return await res.json();
+  } catch (e) {
+    return { error: String((e && e.message) || e) };
+  }
 }

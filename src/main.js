@@ -6,6 +6,7 @@ import { fetchHealth, fetchStats } from './api.js';
 import { renderFlowsTab } from './components/tabs/flows.js';
 import { renderSessionsTab } from './components/tabs/sessions.js';
 import { renderWaitersTab } from './components/tabs/waiters.js';
+import { renderCoordinateTab } from './components/tabs/CoordinateTab.js';
 import { closeDrawer } from './components/drawers/drawer.js';
 import { initKeyboard } from './keyboard.js';
 import {
@@ -17,7 +18,7 @@ import {
   POLL_MAX_MS,
 } from './settings.js';
 
-const VALID_TABS = ['flows', 'sessions', 'waiters', 'stats'];
+const VALID_TABS = ['flows', 'sessions', 'waiters', 'coordinate', 'stats'];
 
 let healthIntervalId = null;
 let statsIntervalId = null;
@@ -298,6 +299,9 @@ function router() {
       break;
     case 'waiters':
       renderWaitersTab();
+      break;
+    case 'coordinate':
+      renderCoordinateTab();
       break;
     default:
       renderFlowsTab();

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .coord-prompts/
+.coord-notes/
 state/test-*.db
 state/test-*.db-*
 state/*.log
