@@ -375,7 +375,10 @@ async function tickPrepareState(flowId) {
   if (next === 'proposal-ready') {
     state.lastStateChangeAt = Date.now();
     state.proposalMarkdown = String(res.proposalMarkdown || '');
-    state.waiter = null;
+    // ADR-008: si viene waiter (approve-plan), guardarlo para que Confirm/Reject
+    // puedan invocar fulfill. Si no viene, es un flow pre-ADR-008 y el Confirm
+    // usa el endpoint legacy POST /api/flows/confirm.
+    state.waiter = res.waiter || null;
     stopPolling();
     transition('proposal-ready');
     updateRecentState(flowId, 'proposal-ready');
@@ -389,6 +392,27 @@ async function tickPrepareState(flowId) {
     stopPolling();
     transition('blocked-by-waiter');
     updateRecentState(flowId, 'blocked-by-waiter');
+    return;
+  }
+
+  // ADR-008: el approve-plan se fulfilled y el dispatcher ya creo el flow
+  // ejecutor (parent_flow_id). Saltar al estado executing y dejar que la UI
+  // haga el jump a la tab Flows con el id correcto.
+  if (next === 'executing') {
+    state.lastStateChangeAt = Date.now();
+    state.confirmResult = {
+      executeFlowId: res.executeFlowId,
+      executeCoordinatorTaskId: null,
+    };
+    stopPolling();
+    transition('executing');
+    updateRecentState(flowId, 'executing');
+    setTimeout(function () {
+      if (state.confirmResult && state.confirmResult.executeFlowId) {
+        openFlowDetailDrawer(state.confirmResult.executeFlowId);
+        window.location.hash = '#flows';
+      }
+    }, 600);
     return;
   }
 
@@ -524,6 +548,22 @@ async function actionConfirm() {
   const prepareFlowId = state.flowId;
   transition('confirming');
 
+  // ADR-008: si hay approve-plan waiter, fulfill con action=confirm.
+  // El dispatcher spawnea `flow confirm` y el polling de prepare-state vera
+  // executing en breve. Si NO hay waiter (flow pre-ADR-008), usamos el
+  // endpoint legacy POST /api/flows/confirm directamente.
+  if (state.waiter && state.waiter.kind === 'approve-plan') {
+    const fulfillRes = await postFulfillWaiter(state.waiter.id, { action: 'confirm' });
+    if (fulfillRes && fulfillRes.error) {
+      state.flowId = prepareFlowId;
+      transitionToError(fulfillRes.error);
+      return;
+    }
+    // Volver a polling para detectar el flow ejecutor (state=executing).
+    startPolling(prepareFlowId);
+    return;
+  }
+
   const res = await postConfirm(prepareFlowId);
   if (!res || res.error) {
     state.flowId = prepareFlowId; // restauramos para permitir retry desde proposal.
@@ -641,6 +681,24 @@ function actionRetry() {
   actionPrepare({ idea: state.lineageIdea || state.idea });
 }
 
+// ADR-008: rechaza el approve-plan waiter via fulfill con action=reject.
+// El dispatcher spawnea `flow cancel` automaticamente.
+async function actionRejectPlan() {
+  if (!state.waiter || state.waiter.kind !== 'approve-plan') {
+    console.warn('[Coordinate] reject-plan sin approve-plan waiter — ignorado');
+    return;
+  }
+  const notes = window.prompt('Motivo del reject (opcional):') || '';
+  const res = await postFulfillWaiter(state.waiter.id, { action: 'reject', notes });
+  if (res && res.error) {
+    transitionToError(res.error);
+    return;
+  }
+  // El flow se cancelara en backend. Refrescar Recent + volver a idle.
+  if (state.flowId) updateRecentState(state.flowId, 'cancelled');
+  resetToIdle({ keepIdea: true });
+}
+
 // ---------------------------------------------------------------------------
 // Render
 // ---------------------------------------------------------------------------
@@ -735,13 +793,24 @@ function renderPreparing() {
 function renderProposalReady() {
   const banner = renderIterationBanner();
   const md = renderMarkdown(state.proposalMarkdown);
+  const hasApproveWaiter = state.waiter && state.waiter.kind === 'approve-plan';
+  // ADR-008: si hay waiter approve-plan, añadir Reject. El Edit idea sigue
+  // disponible pero su funcion es resetear UI — no rechaza el plan.
+  const rejectBtn = hasApproveWaiter
+    ? '<button type="button" class="btn btn-danger" data-coord-action="reject-plan">Reject plan</button>'
+    : '';
+  const waiterHint = hasApproveWaiter
+    ? '<div class="coord-help muted">Approve-plan waiter pendiente — Confirm/Reject persisten en backend.</div>'
+    : '';
   return (
     '<div class="coord-card coord-proposal">' +
     '<div class="coord-card-title">Plan ready &mdash; review</div>' +
     banner +
     '<div class="coord-md md-block">' + (md || '<div class="muted">(sin contenido)</div>') + '</div>' +
+    waiterHint +
     '<div class="coord-actions sticky-footer">' +
     '<button type="button" class="btn btn-primary" data-coord-action="confirm">Confirm and execute</button>' +
+    rejectBtn +
     '<button type="button" class="btn" data-coord-action="edit-idea">Edit idea</button>' +
     '</div>' +
     '</div>'
@@ -955,6 +1024,7 @@ function attachHandlers() {
           break;
         case 'cancel': actionCancelToIdle(); break;
         case 'confirm': actionConfirm(); break;
+        case 'reject-plan': actionRejectPlan(); break;
         case 'edit-idea': actionEditIdea(); break;
         case 'retry': actionRetry(); break;
         default: break;

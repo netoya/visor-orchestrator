@@ -284,6 +284,7 @@ export type PrepareStateKind =
   | 'preparing'
   | 'proposal-ready'
   | 'blocked-by-waiter'
+  | 'executing'
   | 'error';
 
 export interface PrepareState {
@@ -291,4 +292,6 @@ export interface PrepareState {
   proposalMarkdown?: string;
   waiter?: Waiter;
   errorMessage?: string;
+  /** Solo si state='executing' (ADR-008): id del flow hijo creado por flow confirm. */
+  executeFlowId?: string;
 }

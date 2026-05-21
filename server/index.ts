@@ -358,7 +358,16 @@ app.get('/api/tasks/:id/waiters', async (c) => {
   }
 });
 
-function readPlanFile(orchDir: string, name: 'PLAN-FINAL.md' | 'PLAN-PROPOSAL.md'): string | undefined {
+function readPlanFile(orchDir: string, name: 'PLAN-FINAL.md' | 'PLAN-PROPOSAL.md', flowId?: string): string | undefined {
+  // ADR-007/008: archivos preferidos llevan flowId. Fallback legacy sin flowId.
+  if (flowId) {
+    const stem = name.replace('.md', '');
+    try {
+      return readFileSync(join(orchDir, 'state/conversations', `${stem}-${flowId}.md`), 'utf8');
+    } catch {
+      // fallthrough al legacy
+    }
+  }
   try {
     return readFileSync(join(orchDir, 'state/conversations', name), 'utf8');
   } catch {
@@ -370,12 +379,42 @@ app.get('/api/flows/:id/prepare-state', (c) => {
   const flowId = c.req.param('id');
   const orchDir = process.env.ORCHESTRATOR_DIR ?? null;
 
-  // 1. Waiter pasivo `waiting` del flow → blocked-by-waiter.
+  // ADR-008: si ya hay un flow hijo (creado por `flow confirm` tras fulfill
+  // del approve-plan), reportar `executing` con su id. Esto permite que la
+  // UI continue el polling y haga la transicion final a la tab Flows aunque
+  // haya perdido el estado intermedio.
+  const dbForChild = getDb();
+  const childFlow = dbForChild
+    .prepare(`SELECT id FROM flows WHERE parent_flow_id = ? ORDER BY created_at DESC LIMIT 1`)
+    .get(flowId) as { id: string } | undefined;
+  if (childFlow) {
+    const payload: PrepareState = {
+      state: 'executing',
+      executeFlowId: childFlow.id,
+    };
+    return c.json(payload);
+  }
+
+  // 1. Waiter pasivo `waiting` del flow.
   const flowWaiters = listWaiters({ status: 'waiting' }).filter(
     (w) => w.flow_id === flowId && w.mode === 'passive',
   );
-  const proposalMd = orchDir ? readPlanFile(orchDir, 'PLAN-PROPOSAL.md') : undefined;
-  const finalMd = orchDir ? readPlanFile(orchDir, 'PLAN-FINAL.md') : undefined;
+  const proposalMd = orchDir ? readPlanFile(orchDir, 'PLAN-PROPOSAL.md', flowId) : undefined;
+  const finalMd = orchDir ? readPlanFile(orchDir, 'PLAN-FINAL.md', flowId) : undefined;
+
+  // ADR-008: si hay waiter kind='approve-plan' → proposal-ready (con waiter
+  // adjunto para que la UI sepa cual fulfill al confirmar/rechazar). Tiene
+  // prioridad sobre cualquier otro waiter porque significa que el plan ya
+  // esta firme y solo falta la decision humana del confirm/reject.
+  const approvePlan = flowWaiters.find((w) => w.kind === 'approve-plan');
+  if (approvePlan) {
+    const payload: PrepareState = {
+      state: 'proposal-ready',
+      proposalMarkdown: finalMd ?? proposalMd,
+      waiter: approvePlan,
+    };
+    return c.json(payload);
+  }
 
   if (flowWaiters.length > 0) {
     const payload: PrepareState = {
